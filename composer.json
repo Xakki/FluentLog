@@ -1,0 +1,18 @@
+{
+  "name": "xakki/fluent-log",
+  "version": "0.1.1",
+  "description": "Docker Fluent log configs",
+  "type": "library",
+  "tag": "logger",
+  "minimum-stability": "stable",
+  "license": "proprietary",
+  "require": {
+    "psr/log": "^3.0"
+  },
+  "config": {
+    "preferred-install": "dist",
+    "allow-plugins": {
+      "dealerdirect/phpcodesniffer-composer-installer": true
+    }
+  }
+}
