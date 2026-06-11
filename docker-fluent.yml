@@ -4,21 +4,17 @@ x-logging: &_logging
         options:
             fluentd-address: "${EXT_FLUENT_PORT}"
             fluentd-async: "true"
-            # 1000ms — быстрый reconnect к fluent-bit. На 3000ms редкие stderr-сообщения
-            # (nginx [error]) попадали в окно, когда async-сокет был закрыт, и молча дропались.
+            # 1000ms: faster reconnect. At 3000ms rare stderr lines were dropped
+            # while the async socket was closed.
             fluentd-async-reconnect-interval: "1000ms"
-            # 8 MiB — на случай скачка трафика. С 1 MiB при busy connection пакеты dropped.
+            # 8 MiB: headroom for traffic spikes (1 MiB dropped packets on busy connections).
             fluentd-buffer-limit: 8388608
             fluentd-write-timeout: "100s"
-            # Tag = имя контейнера — только входной namespace (service.*). Per-type
-            # парсеры маршрутизируются по лейблу log_format (см. rewrite_tag → gl.<log_format>),
-            # а НЕ по имени контейнера/сервиса. Контейнеры и сервисы можно называть как угодно;
-            # важно лишь проставить log_format (дефолт = имя compose-сервиса через Copy).
+            # Tag is only the input namespace; routing is by the log_format label
+            # (see rewrite_tag -> gl.<log_format>), not by container/service name.
             tag: "service.{{.Name}}"
-            # Driver пробрасывает перечисленные labels в каждую запись под оригинальными
-            # именами (docker v20+, без префикса label_). fluent-bit переименует их в плоские
-            # docker_* + log_format ([FILTER] modify). env: НЕ используем — host/hostname/
-            # docker_profile fluent-bit ставит глобально из СВОЕГО env (см. ниже environment).
+            # Driver forwards these labels under their original names (docker v20+);
+            # fluent-bit flattens them to docker_* + log_format.
             labels: "com.docker.compose.service,com.docker.compose.project,com.docker.compose.image,tier,log_format"
 
 
@@ -74,13 +70,10 @@ services:
             - "${EXT_FLUENT_METRIC_PORT}:2020" # Metrics port
         volumes:
             - ./fluent-bit:/fluent-bit/etc:ro
-            # Универсальный JSON-tail: любые *.ndjson файлы здесь подхватываются
-            # автоматически. Имя файла = имя сервиса (см. enrich_jsonfile).
-            # Bind точки конкретных сервисов в base/_json_logs/<service>.ndjson
-            # из соответствующих контейнеров (или общий host-каталог).
-            - ${JSON_LOG_PATH}:/var/log/json:ro
-            # MariaDB slowlog (mysqld не умеет slowlog в stderr — только файл).
-            - ${MYSQL_SLOWLOG_PATH}:/var/log/mysql_logs:ro
+            # Universal NDJSON tail: any *.ndjson here is picked up; filename = service.
+            - ${JSON_LOG_PATH:-empty_log_volume}:/var/log/json:ro
+            # MariaDB slowlog (mysqld can't write it to stderr).
+            - ${MYSQL_SLOWLOG_PATH:-empty_slowlog_volume}:/var/log/mysql_logs:ro
             - fluent_bit_state:/var/lib/fluent-bit
         environment:
             - TZ=${TZ}
@@ -104,16 +97,15 @@ services:
         image: blacklabelops/logrotate
         container_name: "${COMPOSE_PROJECT_NAME}-logrotate"
         volumes:
-            - ${MYSQL_SLOWLOG_PATH}:/var/log/mysql_logs
-            - ${JSON_LOG_PATH}:/var/log/json
+            - ${MYSQL_SLOWLOG_PATH:-empty_slowlog_volume}:/var/log/mysql_logs
+            - ${JSON_LOG_PATH:-empty_log_volume}:/var/log/json
             - ./logrotate/logrotate.conf:/etc/logrotate.app.conf:ro
         entrypoint: /bin/sh
         command:
+            # The :ro bind-mounted config inherits the host owner (uid != 0) and
+            # logrotate refuses it ("file owner is wrong"). install(1) makes a
+            # root-owned copy once at startup — restart logrotate after editing the config.
             - -c
-            # bind-mounted :ro конфиг наследует host-владельца (uid != 0) →
-            # logrotate отказывается его читать («file owner is wrong»).
-            # install(1) делает копию в root-owned путь один раз на старте контейнера
-            # — после правок конфига нужен restart-logrotate
             - install -m 0644 -o root -g root /etc/logrotate.app.conf /tmp/logrotate.app.conf
                 && exec /usr/bin/go-cron "@daily" /usr/sbin/logrotate --state=/logrotate-status/logrotate.status /tmp/logrotate.app.conf
         restart: unless-stopped
@@ -128,3 +120,5 @@ services:
 
 volumes:
     fluent_bit_state:
+    empty_log_volume:
+    empty_slowlog_volume:
