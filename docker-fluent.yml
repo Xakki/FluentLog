@@ -2,7 +2,7 @@ x-logging: &_logging
     logging:
         driver: fluentd
         options:
-            fluentd-address: "${EXT_FLUENT_PORT}"
+            fluentd-address: "${EXT_FLUENT_PORT:-127.0.0.1:24224}"
             fluentd-async: "true"
             # 1000ms: faster reconnect. At 3000ms rare stderr lines were dropped
             # while the async socket was closed.
@@ -65,9 +65,9 @@ services:
         image: cr.fluentbit.io/fluent/fluent-bit:latest
         container_name: "${COMPOSE_PROJECT_NAME}-fluent-bit"
         ports:
-            - "${EXT_FLUENT_PORT}:24224/udp"
-            - "${EXT_FLUENT_PORT}:24224/tcp"
-            - "${EXT_FLUENT_METRIC_PORT}:2020" # Metrics port
+            - "${EXT_FLUENT_PORT:-127.0.0.1:24224}:24224/udp"
+            - "${EXT_FLUENT_PORT:-127.0.0.1:24224}:24224/tcp"
+            - "${EXT_FLUENT_METRIC_PORT:-127.0.0.1:2020}:2020" # Metrics port
         volumes:
             - ./fluent-bit:/fluent-bit/etc:ro
             # Universal NDJSON tail: any *.ndjson here is picked up; filename = service.

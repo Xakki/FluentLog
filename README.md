@@ -8,16 +8,89 @@ It normalizes heterogeneous sources (PHP/Monolog JSON, nginx, MariaDB, Redis/Key
 stderr) into a consistent GELF record: a Monolog-style level, a correct event timestamp,
 and GELF-safe flat fields.
 
-## Install
+## Integration
+
+This is a **config bundle**, not application code. You consume it by `include:`-ing its
+`docker-fluent.yml` into your Compose stack and adding a thin overlay (an `x-logging` anchor
++ per-service labels). The `fluent-bit`/`logrotate` services, their volumes and the config
+bind-mounts (`./fluent-bit`, `./logrotate`, `./service.d`) all come from the include —
+**configs are used verbatim, never copied into your repo**. Update = bump the pinned version.
+
+Compose resolves relative paths *inside* `docker-fluent.yml` relative to its own directory, so
+they point into the vendored copy; the `include:` path itself is relative to your project root
+(cwd where compose runs). Requires Docker Compose ≥ 2.20.
+
+Vendor the bundle one of two ways:
+
+### A) Composer (PHP projects)
 
 ```sh
 composer require xakki/fluent-log
+```
+
+Lands at `vendor/xakki/fluent-log/`. In your logging overlay:
+
+```yaml
+include:
+    - vendor/xakki/fluent-log/docker-fluent.yml
 ```
 
 Companion PHP loggers that emit the structured logs this config expects:
 
 - Laravel / Monolog — [Xakki/LaraLog](https://github.com/Xakki/LaraLog)
 - Plain PHP (PSR only) — [Xakki/PHPErrorCatcher](https://github.com/Xakki/PHPErrorCatcher)
+
+### B) git submodule (any stack — Python, Go, Node, …)
+
+For projects without Composer. Pin a release tag:
+
+```sh
+git submodule add https://github.com/Xakki/FluentLog.git infra/fluent-log
+git -C infra/fluent-log checkout v0.1.3
+```
+
+```yaml
+include:
+    - infra/fluent-log/docker-fluent.yml
+```
+
+A fresh clone must hydrate the submodule (the include path is empty otherwise and compose
+fails): `git clone --recurse-submodules`, or `git submodule update --init --recursive`. In
+GitLab/GitHub CI set `GIT_SUBMODULE_STRATEGY: recursive`. Bump = `git -C infra/fluent-log
+checkout <newtag>` then commit the submodule pointer.
+
+### The overlay (both cases)
+
+Keep **only** the anchor + per-service labels in your file:
+
+```yaml
+include:
+    - infra/fluent-log/docker-fluent.yml          # or vendor/xakki/fluent-log/...
+
+x-logging: &_logging
+    logging:
+        driver: fluentd
+        options:
+            fluentd-address: "${EXT_FLUENT_PORT:-127.0.0.1:24224}"
+            fluentd-async: "true"
+            tag: "service.{{.Name}}"
+            # Forwarded as flat docker_* + log_format. Do NOT use env: — host/hostname/
+            # docker_profile are set globally from fluent-bit's own env (see Configuration).
+            labels: "com.docker.compose.service,com.docker.compose.project,com.docker.compose.image,tier,log_format"
+
+services:
+    app:
+        <<: *_logging
+        labels: { tier: "web", log_format: "php" }   # omit log_format → service name → auto
+    mariadb:
+        <<: *_logging
+        labels: { tier: "db", log_format: "mariadb" }
+        depends_on: { fluent-bit: { condition: service_started } }
+```
+
+Then provide the env the bundle needs (`GRAYLOG_*`, `HOST_NAME`, `HOST_IP`,
+`COMPOSE_PROJECT_NAME`, …) — see [Configuration](#configuration). Live examples:
+[profmatrix](https://github.com/Xakki) uses path **A**, `proxy-service` uses path **B**.
 
 ## Pipeline
 
